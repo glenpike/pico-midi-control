@@ -41,11 +41,11 @@ device = I2CDevice(i2c, 0x20)
 # midi setup
 channel = 15
 midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], midi_out=usb_midi.ports[1], out_channel=channel)
-midi_mute_cc = 16
+midi_mute_cc = 0
 midi_mute_note = 16
 midi_solo_cc = 64
 midi_solo_note = 8
-bank_size = 12
+bank_size = 8
 bank_offset = 0
 
 class MidiMode:
@@ -79,8 +79,8 @@ button_map = [12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3]
 
 last_button_states = [0] * 16
 last_button_pressed_times = [None] * 16
-mute_states = [0] * 16
-solo_states = [0] * 16
+mute_states = [0] * 64
+solo_states = [0] * 64
 
 def read_button_states():
     pressed = [0] * 16
@@ -123,21 +123,23 @@ def wait(delay):
         time.sleep(0.001)
 
 def short_press(index):
-    if index < 12:
+    if index < 8:
         toggle_mute(index)
     else:
         bank_sel(index)
 
-def long_press(index):
-    if index < 12:
-        toggle_solo(index)
+def long_press(button):
+    if button < 8:
+        toggle_solo(button)
     else:
-        bank_sel(index)
+        bank_sel(button)
 
-def toggle_mute(index):
+def toggle_mute(button):
     global mute_states
     global midi_mute_note
-
+    
+    index = bank_offset * bank_size + button
+    
     mute_state = mute_states[index]
 
     if mute_state == 1:
@@ -146,24 +148,26 @@ def toggle_mute(index):
         mute_states[index] = 1
 
     if midi_mode == MidiMode.MACKIE:
-        toggle_mackie_mute(index, mute_states[index])
+        toggle_mackie_mute(button, mute_states[index])
     else:
-        toggle_custom_mute(index, mute_states[index])
+        toggle_custom_mute(button, mute_states[index])
         
-def toggle_custom_mute(index, mute_state):
-    cc_num = bank_offset * bank_size + midi_mute_cc + index
+def toggle_custom_mute(button, mute_state):
+    cc_num = bank_offset * bank_size + midi_mute_cc + button
     if mute_state == 1:
         midi.send(ControlChange(cc_num, 0))
     else:
         midi.send(ControlChange(cc_num, 127))
 
-def toggle_mackie_mute(index, _mute_state):
-    midi.send(NoteOn(Mackie.MUTE_BASE_NOTE + index, 127))
+def toggle_mackie_mute(button, _mute_state):
+    midi.send(NoteOn(Mackie.MUTE_BASE_NOTE + button, 127))
 
-def toggle_solo(index):
+def toggle_solo(button):
     global solo_states
     global midi_solo_note
 
+    index = bank_offset * bank_size + button
+    
     solo_state = solo_states[index]
 
     if solo_state == 1:
@@ -172,24 +176,24 @@ def toggle_solo(index):
         solo_states[index] = 1
 
     if midi_mode == MidiMode.MACKIE:
-        toggle_mackie_solo(index, solo_states[index])
+        toggle_mackie_solo(button, solo_states[index])
     else:
-        toggle_custom_solo(index, solo_states[index])
+        toggle_custom_solo(button, solo_states[index])
         
-def toggle_mackie_solo(index, solo_state):
-    midi.send(NoteOn(Mackie.SOLO_BASE_NOTE + index, 127))
+def toggle_mackie_solo(button, solo_state):
+    midi.send(NoteOn(Mackie.SOLO_BASE_NOTE + button, 127))
 
-def toggle_custom_solo(index, solo_state):
-    cc_num = bank_offset * bank_size + midi_solo_cc + index
+def toggle_custom_solo(button, solo_state):
+    cc_num = bank_offset * bank_size + midi_solo_cc + button
     if solo_state == 1:
         midi.send(ControlChange(cc_num, 0))
     else:
         midi.send(ControlChange(cc_num, 127))
 
-def bank_sel(index):
+def bank_sel(button):
     global bank_offset
     last_bank_offset = bank_offset
-    bank_offset = index - 12
+    bank_offset = button - 8
     
     if midi_mode == MidiMode.MACKIE:
         if bank_offset < last_bank_offset:
@@ -201,15 +205,16 @@ def update_leds():
     global solo_states
     global mute_states
     global bank_offset
-    for i in range(12):
-        isSolod = solo_states[i]
-        isMuted = mute_states[i]
+    for i in range(8):
+        index = bank_offset * bank_size + i
+        isSolod = solo_states[index]
+        isMuted = mute_states[index]
         if isSolod:
             pixels[i] = Color.SOLO
         else:
             pixels[i] = Color.MUTED if isMuted == 1 else Color.LIVE
-    for i in range(12,16):
-        if bank_offset == i - 12:
+    for i in range(8,16):
+        if bank_offset == i - 8:
             pixels[i] = Color.ACTIVE_BANK
         else:
             pixels[i] = Color.BANK
@@ -217,7 +222,8 @@ def update_leds():
 
 # main loop
 while True:
-    msg_in = midi.receive()  # non-blocking read
+    #msg_in = midi.receive()  # non-blocking read
+    msg_in = None
     if msg_in is not None:
         if isinstance(msg_in, NoteOn):
             print(f"NoteOn {msg_in.note}, v{msg_in.velocity}, ch {msg_in.channel + 1}")
