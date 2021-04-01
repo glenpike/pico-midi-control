@@ -25,6 +25,7 @@ import adafruit_midi
 from adafruit_midi.control_change import ControlChange
 from adafruit_midi.note_on import NoteOn
 from adafruit_midi.note_off import NoteOff
+from adafruit_midi.system_exclusive import SystemExclusive
 from adafruit_midi.midi_message import MIDIUnknownEvent
 
 # led setup
@@ -40,7 +41,7 @@ device = I2CDevice(i2c, 0x20)
 
 # midi setup
 channel = 15
-midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], midi_out=usb_midi.ports[1], out_channel=channel)
+midi = adafruit_midi.MIDI(midi_in=usb_midi.ports[0], midi_out=usb_midi.ports[1], out_channel=channel, debug=False)
 midi_mute_cc = 0
 midi_mute_note = 16
 midi_solo_cc = 64
@@ -99,7 +100,7 @@ def read_button_states():
 
 def wait(delay):
     update_leds()
-    
+
     global midi_mode
     global button_mode
     global last_button_states
@@ -137,9 +138,9 @@ def long_press(button):
 def toggle_mute(button):
     global mute_states
     global midi_mute_note
-    
+
     index = bank_offset * bank_size + button
-    
+
     mute_state = mute_states[index]
 
     if mute_state == 1:
@@ -151,7 +152,7 @@ def toggle_mute(button):
         toggle_mackie_mute(button, mute_states[index])
     else:
         toggle_custom_mute(button, mute_states[index])
-        
+
 def toggle_custom_mute(button, mute_state):
     cc_num = bank_offset * bank_size + midi_mute_cc + button
     if mute_state == 1:
@@ -161,13 +162,14 @@ def toggle_custom_mute(button, mute_state):
 
 def toggle_mackie_mute(button, _mute_state):
     midi.send(NoteOn(Mackie.MUTE_BASE_NOTE + button, 127))
+    print(f"toggle_mackie_mute:  {button}: {_mute_state}")
 
 def toggle_solo(button):
     global solo_states
     global midi_solo_note
 
     index = bank_offset * bank_size + button
-    
+
     solo_state = solo_states[index]
 
     if solo_state == 1:
@@ -179,8 +181,9 @@ def toggle_solo(button):
         toggle_mackie_solo(button, solo_states[index])
     else:
         toggle_custom_solo(button, solo_states[index])
-        
+
 def toggle_mackie_solo(button, solo_state):
+    print(f"toggle_mackie_solo {button}")
     midi.send(NoteOn(Mackie.SOLO_BASE_NOTE + button, 127))
 
 def toggle_custom_solo(button, solo_state):
@@ -194,7 +197,7 @@ def bank_sel(button):
     global bank_offset
     last_bank_offset = bank_offset
     bank_offset = button - 8
-    
+
     if midi_mode == MidiMode.MACKIE:
         if bank_offset < last_bank_offset:
             midi.send(NoteOn(Mackie.BANK_LEFT, 127))
@@ -219,18 +222,50 @@ def update_leds():
         else:
             pixels[i] = Color.BANK
 
+def handle_note_on(msg_in):
+    global mute_states
+    global solo_states
+    note = msg_in.note
+    print(f"handle_note_on:  {note}: {msg_in.velocity}")
+    index = note - Mackie.MUTE_BASE_NOTE
+    if index >= 0 and index < len(mute_states):
+        print(f"setting Mute:  {index}: {msg_in.velocity}")
+        if msg_in.velocity == 127:
+            mute_states[index] = 1
+        else:
+            mute_states[index] = 0
+    else:
+        index = note - Mackie.SOLO_BASE_NOTE
+        if index >= 0 and index < len(solo_states):
+            print(f"setting Solo:  {index}: {msg_in.velocity}")
+            if msg_in.velocity != 0: #Reaper sends 1, Ableton 127
+                solo_states[index] = 1
+            else:
+                solo_states[index] = 0
+
+
+def handle_sysex(msg_in):
+    print(f"SystemExclusive mfr: {msg_in.manufacturer_id}, data: {msg_in.data}")
+    #midi.send(msg_in)
 
 # main loop
 while True:
-    #msg_in = midi.receive()  # non-blocking read
-    msg_in = None
+    #buf = usb_midi.ports[0].read()
+    #if buf is not None and len(buf):
+    #    print(f"buf: {buf}")
+    msg_in = midi.receive()  # non-blocking read
+    #msg_in = None
     if msg_in is not None:
-        if isinstance(msg_in, NoteOn):
-            print(f"NoteOn {msg_in.note}, v{msg_in.velocity}, ch {msg_in.channel + 1}")
-        elif isinstance(msg_in, NoteOff):
-            print(f"NoteOff {msg_in.note}, ch {msg_in.channel + 1}")
-        elif isinstance(msg_in, ControlChange):
-            print(f"ControlChange {msg_in.control}, v{msg_in.value}, ch {msg_in.channel + 1}")
-        elif isinstance(msg_in, MIDIUnknownEvent) is not True:
-            print("msg_in ", msg_in)
-    wait(0.105)
+        if isinstance(msg_in, SystemExclusive):
+            handle_sysex(msg_in)
+        elif isinstance(msg_in, NoteOn):
+            handle_note_on(msg_in)
+        #elif isinstance(msg_in, NoteOff):
+        #    print(f"NoteOff {msg_in.note}, ch {msg_in.channel + 1}")
+        #elif isinstance(msg_in, ControlChange):
+        #    print(f"ControlChange {msg_in.control}, v{msg_in.value}, ch {msg_in.channel + 1}")
+        #elif isinstance(msg_in, MIDIUnknownEvent):
+        #    print(f"MIDIUnknownEvent? status: {msg_in.status}")
+        #else:
+        #    print(f"Unknown Message? type: {type(msg_in)}, status: {msg_in.status}")
+    wait(0.005)
